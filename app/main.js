@@ -1,4 +1,6 @@
-const { app } = require( 'electron' )
+const { app, session } = require( 'electron' )
+const { configureOffline } = require( './modules/offline' )
+const finishOfflineSetup = configureOffline( app, session )
 const { alert } = require( './modules/helpers' )
 const { set_initial_interface } = require( './modules/interface' )
 
@@ -8,7 +10,10 @@ const { set_initial_interface } = require( './modules/interface' )
 // Event listeners
 // /////////////////////////////*/
 
-app.whenReady().then( set_initial_interface )
+app.whenReady().then( () => {
+    finishOfflineSetup()
+    return set_initial_interface()
+} )
 
 /* ///////////////////////////////
 // Global config
