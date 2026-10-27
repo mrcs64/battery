@@ -7,8 +7,8 @@
     "appId": "co.palokaj.battery",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "dmg": {
-			"writeUpdateInfo": false
-		},
+      "writeUpdateInfo": false
+    },
     "compression": "normal",
     "extraFiles": {
       "from": "./assets",
@@ -23,14 +23,16 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist"
-    }
+    },
+    "publish": null
   },
   "scripts": {
     "start": "development=true electron .",
     "start:watch": "nodemon --watch . --exec 'skipupdate=true development=true electron .'",
     "build": "rm -rf ./dist/* && electron-builder build --mac --arm64",
     "prepare": "cd .. && husky install ./app/.husky",
-    "lint": "eslint --fix modules main.js"
+    "lint": "eslint --fix modules main.js",
+    "build:local": "node ../native/prepare-electron.js && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --arm64 --publish never --config.electronDist=node_modules/electron/dist --config.mac.identity=- && /usr/bin/codesign --force --deep --sign - --options runtime --entitlements build/entitlements.mac.plist dist/mac-arm64/battery.app && /usr/bin/codesign --verify --deep --strict dist/mac-arm64/battery.app"
   },
   "repository": "https://github.com/actuallymentor/battery",
   "keywords": [
@@ -52,7 +54,5 @@
     "husky": "^8.0.3",
     "nodemon": "^2.0.20"
   },
-  "dependencies": {
-    "update-electron-app": "^2.0.1"
-  }
+  "dependencies": {}
 }

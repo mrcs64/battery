@@ -11,6 +11,7 @@ exports.default = async function notarizing( context ) {
     log( '\n\n🪝 afterSign hook triggered: ' )
     const { appOutDir } = context 
     const { APPLEID, APPLEIDPASS, TEAMID } = process.env
+    if( !APPLEID || !APPLEIDPASS || !TEAMID ) return log( 'Local build: notarization skipped (no credentials)' )
     const appName = context.packager.appInfo.productFilename
 
     return await notarize( {

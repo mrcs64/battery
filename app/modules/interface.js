@@ -1,6 +1,6 @@
 const { shell, app, Tray, Menu, powerMonitor, nativeTheme } = require( 'electron' )
 const { enable_battery_limiter, disable_battery_limiter, initialize_battery, is_limiter_enabled, get_battery_status } = require( './battery' )
-const { log } = require( "./helpers" )
+const { log, alert } = require( './helpers' )
 const { get_inactive_logo, get_active_logo } = require( './theme' )
 
 /* ///////////////////////////////
@@ -13,7 +13,7 @@ const generate_app_menu = async () => {
 
     try {
         // Get battery and daemon status
-        const { battery_state, daemon_state, maintain_percentage=80, percentage } = await get_battery_status()
+        const { battery_state, daemon_state, maintain_percentage=60, percentage } = await get_battery_status()
 
         // Check if limiter is on
         const limiter_on = await is_limiter_enabled()
@@ -32,7 +32,7 @@ const generate_app_menu = async () => {
                 click: enable_limiter
             },
             {
-                label: `Disable ${ maintain_percentage }% battery limit`,
+                label: 'Restore prior native limit settings',
                 type: 'radio',
                 checked: !limiter_on,
                 click: disable_limiter
@@ -55,17 +55,17 @@ const generate_app_menu = async () => {
                 label: `About v${ app.getVersion() }`,
                 submenu: [
                     {
-                        label: `Check for updates`,
-                        click: () => shell.openExternal( `https://github.com/actuallymentor/battery/releases` )
+                        label: 'Updates disabled in native fork',
+                        enabled: false
                     },
                     {
                         label: `User manual`,
-                        click: () => shell.openExternal( `https://github.com/actuallymentor/battery#readme` )
+                        click: () => shell.openExternal( `https://github.com/mrcs64/battery/blob/feature/macos27-root-mcl60/docs/NATIVE.md` )
                     },
                     {
                         type: 'normal',
                         label: 'Command-line usage',
-                        click: () => shell.openExternal( `https://github.com/actuallymentor/battery#-command-line-version` )
+                        click: () => shell.openExternal( `https://github.com/mrcs64/battery/blob/feature/macos27-root-mcl60/docs/NATIVE.md#contract` )
                     },
                     {
                         type: 'normal',
@@ -85,6 +85,12 @@ const generate_app_menu = async () => {
         ] )
     } catch ( e ) {
         log( `Error generating menu: `, e )
+        tray.setImage( get_inactive_logo() )
+        return Menu.buildFromTemplate( [
+            { label: 'Native backend unavailable', enabled: false },
+            { label: 'Show error', click: () => alert( e.message ) },
+            { label: 'Quit', click: () => app.quit() }
+        ] )
     }
 
 }
@@ -97,7 +103,14 @@ const set_interface_update_timer = async ( disable_only=false ) => {
     else log( `Disabling interface update timer due to disable_only set to `, disable_only )
 
     // Calculate update speed
-    const { maintain_percentage=80, percentage, charging } = await get_battery_status()
+    let status
+    try {
+        status = await get_battery_status()
+    } catch ( e ) {
+        log( 'Cannot refresh native status: ', e )
+        return
+    }
+    const { maintain_percentage=60, percentage, charging } = status
     const percentage_delta = Math.floor( Math.abs( percentage - maintain_percentage ) )
     const slow_refresh_interval_in_ms = 1000 * 60 * 10
     const fast_refresh_interval_in_ms = 1000 * 60 * .5
@@ -150,16 +163,19 @@ async function set_initial_interface() {
     tray = new Tray( get_inactive_logo() )
 
     // Set "loading" context
-    tray.setTitle( '  updating...' )
+    tray.setTitle( '  loading...' )
     
     log( "Tray app boot complete" )
 
-    log( "Triggering boot-time auto-update" )
-    await initialize_battery()
+    try {
+        await initialize_battery()
+    } catch ( e ) {
+        await alert( `Native backend unavailable: ${ e.message }. Install the reviewed local fork; no password will be requested by the app.` )
+        app.quit()
+        return
+    }
     log( "App initialisation process complete" )
 
-    // Start battery handler
-    await enable_battery_limiter()
 
     // Set tray styles
     tray.setTitle( '' )
@@ -186,13 +202,14 @@ async function enable_limiter() {
 
     try {
         log( 'Enable limiter' )
-        await refresh_logo( 80, 'active' )
         const percent_left = await enable_battery_limiter()
         log( `Interface enabled limiter, percentage remaining: ${ percent_left }` )
         await refresh_logo( percent_left, 'active' )
         await refresh_tray()
     } catch ( e ) {
         log( `Error in enable_limiter: `, e )
+        await alert( e.message )
+        await refresh_tray()
     }
 
 }
@@ -201,13 +218,14 @@ async function disable_limiter() {
 
     try {
         log( 'Disable limiter' )
-        await refresh_logo( 80, 'inactive' )
         const percent_left = await disable_battery_limiter()
         log( `Interface enabled limiter, percentage remaining: ${ percent_left }` )
         await refresh_logo( percent_left, 'inactive' )
         await refresh_tray()
     } catch ( e ) {
         log( `Error in disable_limiter: `, e )
+        await alert( e.message )
+        await refresh_tray()
     }
 
 }
