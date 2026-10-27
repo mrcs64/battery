@@ -214,7 +214,28 @@ def agent_fd(user):
         raise
 
 
-def save_agent(user):
+def parse_agent(data):
+    import plistlib
+    # The legacy shell emits a newline before the XML declaration. Apple's
+    # plutil/launchd accept it; plistlib's format sniffing does not. Normalize
+    # only an XML prefix for parsing, never binary bytes or the saved original.
+    xml = data.lstrip(b" \t\r\n")
+    candidate = xml if xml.startswith(b"<?xml") else data
+    try:
+        value = plistlib.loads(candidate)
+    except Exception as error:
+        raise RuntimeError(f"Cannot parse legacy LaunchAgent battery.plist: {type(error).__name__}: {error}") from error
+    if not isinstance(value, dict):
+        raise RuntimeError("Legacy LaunchAgent battery.plist must contain a dictionary")
+    argv = value.get("ProgramArguments", [])
+    if value.get("Label") != "com.battery.app" or argv not in (
+            [str(CLI), "maintain_synchronous", "recover"],
+            [str(LINK), "maintain_synchronous", "recover"]):
+        raise RuntimeError("Unknown legacy LaunchAgent: review and stop it manually")
+    return value
+
+
+def save_agent(user, preflight=False):
     fd = agent_fd(user)
     if fd is None:
         return None
@@ -228,14 +249,9 @@ def save_agent(user):
             if not stat.S_ISREG(st.st_mode) or st.st_uid not in (0, user.pw_uid) or st.st_size > 1024 * 1024:
                 raise RuntimeError("Unsafe legacy LaunchAgent")
             data = stream.read()
-        import plistlib
-        value = plistlib.loads(data)
-        argv = value.get("ProgramArguments", [])
-        if value.get("Label") != "com.battery.app" or argv not in (
-                [str(CLI), "maintain_synchronous", "recover"],
-                [str(LINK), "maintain_synchronous", "recover"]):
-            raise RuntimeError("Unknown legacy LaunchAgent: review and stop it manually")
-        (BASE / "legacy-agent.plist").write_bytes(data)
+        parse_agent(data)
+        if not preflight:
+            (BASE / "legacy-agent.plist").write_bytes(data)
         return {"uid": st.st_uid, "gid": st.st_gid, "mode": stat.S_IMODE(st.st_mode)}
     finally:
         os.close(fd)
@@ -345,6 +361,30 @@ def rollback(manifest):
     print("Rollback complete. Backups retained. Legacy LaunchAgent restored but not loaded; reopen original app when ready.")
 
 
+def archive_preflight(user):
+    """Preserve a pre-journal failure only if every backup still matches live files."""
+    import uuid
+    st = BASE.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o077:
+        raise RuntimeError("Unsafe installer state")
+    if exists(STATE):
+        raise RuntimeError("Helper state exists; use reviewed rollback, not preflight recovery")
+    entries = list(BASE.iterdir())
+    allowed = {f"backup-{i}": path for i, path in enumerate(TARGETS)}
+    if not entries or any(entry.name not in allowed for entry in entries):
+        raise RuntimeError("Not an unjournaled backup-only failure; inspect state/manifest before recovery")
+    for entry in entries:
+        target = allowed[entry.name]
+        check_target(target)
+        if not exists(target) or digest(entry) != digest(target):
+            raise RuntimeError(f"Incomplete or changed backup: {entry}; refusing recovery")
+    save_agent(user, preflight=True)
+    destination = BASE.with_name(BASE.name + ".preflight-" + uuid.uuid4().hex)
+    os.rename(BASE, destination)
+    print(f"Unjournaled preflight backups verified against live targets and retained at: {destination}")
+    print("No installed targets, controllers, or preferences changed. Retry install explicitly.")
+
+
 def install(repo, app, user):
     if exists(BASE):
         raise RuntimeError(f"Existing installer state: {BASE}; review/rollback before another installation")
@@ -361,6 +401,7 @@ def install(repo, app, user):
     run("/usr/bin/codesign", "--verify", "--deep", "--strict", str(app))
     run("/usr/bin/file", str(repo / "build/battery-native"))
     controllers(user)  # detect unsupported competing tools and open GUI before any cutover
+    save_agent(user, preflight=True)  # Parse before creating backup state; save again before cutover.
     BASE.mkdir(mode=0o700)
     manifest = {"user": user.pw_name, "phase": "prepared", "published": False, "files": [], "agent": None}
     for i, path in enumerate(TARGETS):
@@ -430,7 +471,7 @@ def install(repo, app, user):
 def main():
     global INSTALL_UID
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("install", "rollback"))
+    parser.add_argument("action", choices=("install", "rollback", "archive-preflight"))
     parser.add_argument("--user")
     parser.add_argument("--app", type=Path)
     parser.add_argument("--repo", type=Path)
@@ -462,6 +503,14 @@ def main():
             parser.error("install requires --repo PATH")
         INSTALL_UID = user.pw_uid
         install(args.repo.absolute(), args.app.absolute(), user)
+    elif args.action == "archive-preflight":
+        if not args.user or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", args.user):
+            parser.error("archive-preflight requires --user SHORTNAME")
+        user = pwd.getpwnam(args.user)
+        if user.pw_uid < 500:
+            parser.error("Select a normal local user")
+        INSTALL_UID = user.pw_uid
+        archive_preflight(user)
     else:
         st = BASE.lstat()
         if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o077:

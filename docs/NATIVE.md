@@ -73,6 +73,59 @@ open /Applications/battery.app
 
 The GUI itself does no downloads or upstream updates. Also prevent any external Homebrew/cask/MDM upgrade of this fork; those external managers are not modified by this project.
 
+## Installer failure: `battery installer: Invalid file`
+
+The legacy `~/Library/LaunchAgents/battery.plist` on this host starts with a newline
+before `<?xml`. `plutil -lint` and the running launchd job accept it, but stock
+`/usr/bin/python3`'s `plistlib.loads` raises `InvalidFileException: Invalid file`
+before format detection. This is the Python installer (`battery installer:`), not
+the Swift bootstrap (`battery-installer:`). The corrected parser strips only XML
+prefix whitespace for parsing, still validates the dictionary, exact label and
+argv, and backs up the **unchanged original bytes**. Invalid input now names the
+LaunchAgent and parse exception. Parsing also runs before backup state creation.
+
+Read-only inspection after the reported failure found the protected bootstrap,
+`battery-native-install` directory and lock, but no helper state or installed native
+helper; the original LaunchAgent is still running. The protected directory contents
+could not be inspected without administrator authorization. Do **not** delete it
+or invoke rollback blindly: this error occurs before the first manifest is written.
+
+After rebuilding with `bash native/build.sh`, quit the installed battery GUI normally.
+Run this complete sequence in your own Terminal, from the repository root. The
+first command is a normal local sudo authorization (never provide a password to an
+agent/chat); subsequent commands fail rather than prompt. `archive-preflight` is
+an explicit, root-only recovery action, never granted in sudoers. It refuses any
+manifest, staging file, helper state, unexpected entry, or backup whose content no
+longer matches its live target. It **renames** only a verified unjournaled backup-only
+directory to a unique protected `.preflight-…` sibling, retaining all backups; it
+never stops a controller or modifies installed files/preferences. If it refuses,
+stop and inspect the named state as administrator; do not delete/bypass validation.
+
+```sh
+cd /Users/damianczerniak/Repos/battery &&
+sudo -v &&
+sudo -n /usr/bin/install -d -o root -g wheel -m 700 '/Library/Application Support/battery-native-bootstrap' &&
+sudo -n /usr/bin/install -o root -g wheel -m 755 build/battery-installer '/Library/Application Support/battery-native-bootstrap/battery-installer' &&
+sudo -n '/Library/Application Support/battery-native-bootstrap/battery-installer' archive-preflight --user damianczerniak &&
+sudo -n '/Library/Application Support/battery-native-bootstrap/battery-installer' install \
+  --user damianczerniak --repo "$PWD" --app "$PWD/app/dist/mac-arm64/battery.app" &&
+/usr/local/bin/battery fixed60 &&
+/usr/local/bin/battery status &&
+/usr/bin/pmset -g battlimit &&
+/usr/bin/pmset -g batt &&
+open /Applications/battery.app
+```
+
+Verification for this fix: the exact live LaunchAgent bytes reproduced the original
+exception under Apple's Python; the corrected parser accepts those same untouched
+bytes. Swift helper tests, Python installer/CLI tests (including recovery refusal
+and byte-preserving backup), GUI tests and rebuilt native binary signatures passed.
+The existing built app signature also passed; no GUI/helper source changed. The
+privileged bootstrap/install/recovery and fixed60 remain **unexecuted** because
+`sudo -n true` still requires a password in this session. Thus no full-install or
+physical 60% enforcement claim is made. Current read-only telemetry showed an 80%
+manual limit and AC attached/not charging at 80%.
+
 ## Restore and rollback
 
 Stop only this fork's request, retaining the installation:

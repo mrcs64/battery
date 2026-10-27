@@ -30,6 +30,35 @@ Considered and ruled out within the reviewed scope: shell injection from native 
 - `/usr/sbin/visudo -cf "$PWD/build/native-sudoers-test"`: **parsed OK**, using a disposable generated policy in the repository; no installed sudoers file changed.
 - `python3 -m py_compile native/install.py native/embed-installer.py`, Node syntax checks and `git diff --check`: **passed**.
 
+## Installer-failure follow-up review
+
+The user subsequently ran the documented installer and reported `battery installer: Invalid file`.
+Read-only investigation reproduced that exact exception by loading the original commit's
+`save_agent` and reading the actual LaunchAgent under Apple's `/usr/bin/python3`, without
+privileged writes. Its first byte is a newline before the XML declaration. `plutil -lint`
+passes and launchd still runs the original job. The Swift bootstrap's different error
+prefix rules it out as the emitter of this Python exception.
+
+Reviewed changes: XML-only prefix normalization for parsing, exact original-byte backup,
+unchanged no-follow/owner/type/size and exact argv validation, an additional read-only
+agent preflight before BASE creation, and explicit administrator-only `archive-preflight`.
+Recovery rejects a manifest or any non-backup entry, unsafe BASE, helper state, absent or
+changed live target. It archives rather than deletes matching backups; it neither grants
+new sudoers rights nor changes controllers/preferences/installed targets. Existing journaled
+states retain their existing rollback path. Partial root-owned state remains untouched in
+this session because `sudo -n true` failed. Contents could not be enumerated; the new
+recovery path must validate them at runtime and fails closed if the expected state differs.
+
+Validation: 13 Swift, 24 Python and 5 Node tests passed, including malformed/binary/unknown
+agent input, symlink rejection, exact byte backup, pre-backup rejection and recovery refusal
+for a manifest, changed backup or helper state. Both default Python and Apple's Python
+passed the installer tests. Original `save_agent` failed on the exact live file; fixed
+fd-anchored `save_agent(..., preflight=True)` passed on the same unmodified file. Rebuilt
+helper/installer signatures and the existing built GUI signature passed strict validation.
+No GUI/helper source changed, so a GUI rebuild was unnecessary. Corrected fail-fast
+administrator commands, including safe retained-backup recovery, are in NATIVE.md.
+No privileged installation/recovery, fixed60 activation or GUI launch was performed.
+
 ## Unverified boundary
 
 Actual root defaults/notification effects, privileged ownership transitions, installation/rollback, launchctl cutover, real GUI interaction, sleep/reboot behavior, and physical 60% enforcement remain untested. Native preference read-back is only a configured request. Existing installed state remains untouched. Coordinator review is the next step; a later administrator must separately authorize installation and physical charging observation.

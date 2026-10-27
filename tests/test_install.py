@@ -1,3 +1,4 @@
+import plistlib
 import importlib.util
 import json
 import os
@@ -18,6 +19,82 @@ class InstallerTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=Path(__file__).parents[1] / "build")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).absolute()
+
+    def agent(self):
+        return {"Label": "com.battery.app", "ProgramArguments": [str(m.CLI), "maintain_synchronous", "recover"]}
+
+    def test_legacy_xml_leading_newline_and_binary_are_validated(self):
+        for fmt in (plistlib.FMT_XML, plistlib.FMT_BINARY):
+            data = plistlib.dumps(self.agent(), fmt=fmt)
+            if fmt == plistlib.FMT_XML:
+                data = b"\n \t\r\n" + data
+            self.assertEqual(m.parse_agent(data), self.agent())
+        with self.assertRaisesRegex(RuntimeError, "Cannot parse legacy LaunchAgent battery.plist"):
+            m.parse_agent(b"\n<?xml broken")
+        with self.assertRaisesRegex(RuntimeError, "dictionary"):
+            m.parse_agent(plistlib.dumps([]))
+        bad = self.agent()
+        bad["ProgramArguments"] = ["/bin/sh", "-c", "id"]
+        with self.assertRaisesRegex(RuntimeError, "Unknown legacy LaunchAgent"):
+            m.parse_agent(b"\n" + plistlib.dumps(bad))
+
+    def test_agent_preflight_and_backup_preserve_exact_original_bytes(self):
+        data = b"\n" + plistlib.dumps(self.agent())
+        agent = self.root / "battery.plist"
+        agent.write_bytes(data)
+        backup = self.root / "backups"
+        user = types.SimpleNamespace(pw_uid=os.getuid())
+        with patch.object(m, "BASE", backup), patch.object(m, "agent_fd", side_effect=lambda u: os.open(self.root, os.O_RDONLY)):
+            m.save_agent(user, preflight=True)
+            self.assertFalse(backup.exists())
+            backup.mkdir()
+            m.save_agent(user)
+            self.assertEqual((backup / "legacy-agent.plist").read_bytes(), data)
+            agent.unlink()
+            agent.symlink_to(backup / "legacy-agent.plist")
+            with self.assertRaises(OSError):
+                m.save_agent(user, preflight=True)
+            self.assertEqual((backup / "legacy-agent.plist").read_bytes(), data)
+
+    def test_invalid_agent_fails_before_backup_directory_or_cutover(self):
+        stack, repo, app, user = self.environment()
+        stack.enter_context(patch.object(m, "run", return_value=types.SimpleNamespace(stdout="", returncode=0)))
+        m.save_agent.side_effect = RuntimeError("Cannot parse legacy LaunchAgent battery.plist")
+        with self.assertRaisesRegex(RuntimeError, "Cannot parse"):
+            m.install(repo, app, user)
+        self.assertFalse(m.BASE.exists())
+        m.stop_legacy.assert_not_called()
+
+    def test_preflight_archive_preserves_matching_backups_and_refuses_other_state(self):
+        stack, repo, app, user = self.environment()
+        m.BASE.mkdir(mode=0o700)
+        m.copy(m.CLI, m.BASE / "backup-0")
+        real_lstat = Path.lstat
+        def root_stat(path, *args, **kwargs):
+            value = real_lstat(path, *args, **kwargs)
+            if path == m.BASE:
+                return types.SimpleNamespace(st_mode=value.st_mode, st_uid=0)
+            return value
+        with patch.object(Path, "lstat", root_stat):
+            (m.BASE / "manifest.json").write_text("{}")
+            with self.assertRaisesRegex(RuntimeError, "unjournaled"):
+                m.archive_preflight(user)
+            (m.BASE / "manifest.json").unlink()
+            (m.BASE / "backup-0").write_text("incomplete")
+            with self.assertRaisesRegex(RuntimeError, "Incomplete or changed"):
+                m.archive_preflight(user)
+            (m.BASE / "backup-0").write_text(m.CLI.read_text())
+            m.STATE.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "Helper state exists"):
+                m.archive_preflight(user)
+            m.STATE.rmdir()
+            m.archive_preflight(user)
+        self.assertFalse(m.BASE.exists())
+        archives = list(self.root.glob("base.preflight-*"))
+        self.assertEqual(len(archives), 1)
+        self.assertEqual((archives[0] / "backup-0").read_text(), "old cli")
+        self.assertEqual(m.CLI.read_text(), "old cli")
+        m.stop_legacy.assert_not_called()
 
     def test_policy_has_exact_arguments_and_only_named_user(self):
         text = m.policy("tester")
