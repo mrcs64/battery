@@ -1,5 +1,5 @@
-const { shell, app, Tray, Menu, powerMonitor, nativeTheme } = require( 'electron' )
-const { enable_battery_limiter, disable_battery_limiter, initialize_battery, is_limiter_enabled, get_battery_status } = require( './battery' )
+const { shell, app, Tray, Menu, powerMonitor, nativeTheme, dialog } = require( 'electron' )
+const { disable_battery_limiter, initialize_battery, is_limiter_enabled, get_battery_status, LIMIT_PRESETS, set_battery_limit } = require( './battery' )
 const { log, alert } = require( './helpers' )
 const { get_inactive_logo, get_active_logo } = require( './theme' )
 
@@ -13,10 +13,7 @@ const generate_app_menu = async () => {
 
     try {
         // Get battery and daemon status
-        const { battery_state, daemon_state, maintain_percentage=60, percentage } = await get_battery_status()
-
-        // Check if limiter is on
-        const limiter_on = await is_limiter_enabled()
+        const { battery_state, daemon_state, power, maintain_percentage, percentage, limiter_enabled: limiter_on } = await get_battery_status()
 
         // Set tray icon
         log( `Generate app menu percentage: ${ percentage }` )
@@ -25,37 +22,31 @@ const generate_app_menu = async () => {
         // Build menu
         return Menu.buildFromTemplate( [
 
+            { label: `Battery: ${ battery_state }`, enabled: false },
+            { label: `Power source: ${ power.source }`, enabled: false },
+            { label: daemon_state, enabled: false },
+            { type: 'separator' },
             {
-                label: `Enable ${ maintain_percentage }% battery limit`,
-                type: 'radio',
-                checked: limiter_on,
-                click: enable_limiter
+                label: 'Set charge limit',
+                submenu: LIMIT_PRESETS.map( value => ( {
+                    label: `${ value }%`, type: 'checkbox',
+                    checked: limiter_on && maintain_percentage === value,
+                    click: () => change_limit( value )
+                } ) )
             },
             {
-                label: 'Restore prior native limit settings',
-                type: 'radio',
-                checked: !limiter_on,
+                label: 'Restore previous settings…',
+                enabled: limiter_on,
                 click: disable_limiter
             },
+            // eslint-disable-next-line no-use-before-define
+            { label: 'Refresh status', click: () => refresh_tray() },
+            { type: 'separator' },
             {
-                type: 'separator'
-            },
-            {
-                label: `Battery: ${ battery_state }`,
-                enabled: false
-            },
-            {
-                label: `Power: ${ daemon_state }`,
-                enabled: false
-            },
-            {
-                type: 'separator'
-            },
-            {
-                label: `About v${ app.getVersion() }`,
+                label: `Battery v${ app.getVersion() } — mrcs64 fork`,
                 submenu: [
                     {
-                        label: 'Updates disabled in native fork',
+                        label: 'Limit is a system request; physical enforcement not verified',
                         enabled: false
                     },
                     {
@@ -186,8 +177,7 @@ async function set_initial_interface() {
     tray.on( 'click', () => refresh_tray() )
     nativeTheme.on( 'updated', () => refresh_tray() )
 
-    // Set refresh timer for the battery icon
-    set_interface_update_timer()
+    // refresh_tray already starts the timer; avoid concurrent native status reads.
     powerMonitor.on( 'lock-screen', () => set_interface_update_timer( true ) )
     powerMonitor.on( 'unlock-screen', () => set_interface_update_timer() )
     powerMonitor.on( 'suspend', () => set_interface_update_timer( true ) )
@@ -198,23 +188,23 @@ async function set_initial_interface() {
 /* ///////////////////////////////
 // User interactions
 // /////////////////////////////*/
-async function enable_limiter() {
-
+async function change_limit( value ) {
     try {
-        log( 'Enable limiter' )
-        const percent_left = await enable_battery_limiter()
-        log( `Interface enabled limiter, percentage remaining: ${ percent_left }` )
-        await refresh_logo( percent_left, 'active' )
-        await refresh_tray()
+        await set_battery_limit( value )
     } catch ( e ) {
-        log( `Error in enable_limiter: `, e )
         await alert( e.message )
-        await refresh_tray()
     }
-
+    await refresh_tray()
 }
 
 async function disable_limiter() {
+    const { response } = await dialog.showMessageBox( {
+        type: 'question', buttons: [ 'Cancel', 'Restore previous settings' ],
+        defaultId: 0, cancelId: 0,
+        message: 'Restore the settings saved before Battery first changed the limit?',
+        detail: 'This restores the original saved values (including settings that were absent), not a new 100% limit. Quitting Battery alone does not restore settings.'
+    } )
+    if( response !== 1 ) return
 
     try {
         log( 'Disable limiter' )
