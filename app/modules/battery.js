@@ -3,6 +3,7 @@ const { promisify } = require( 'node:util' )
 const run = promisify( execFile )
 const battery = '/usr/local/co.palokaj.battery/battery'
 const { parse_power } = require( './power' )
+const { read_override, override_status } = require( './override' )
 const LIMIT_PRESETS = [ '60', '70', '80', '90', '100' ]
 
 const call = async ( ...args ) => {
@@ -24,10 +25,11 @@ const get_battery_status = async () => {
         power = parse_power( stdout )
     } catch { /* Keep native limit controls available if power telemetry fails. */ }
     return {
+        ...override_status( limit, await read_override() ),
         power, percentage, remaining, charging: power.state === 'Charging', discharging: power.state === 'Discharging',
         maintain_percentage: limit || '60', limiter_enabled: limit !== '',
         battery_state: `${ percentage }% — ${ power.state }${ power.time ? ` (${ power.time } ${ power.state === 'Charging' ? 'until full' : 'remaining' })` : '' }`,
-        daemon_state: limit ? `System charge limit: ${ limit }%` : 'System charge limit: not set by Battery'
+        daemon_state: limit ? `Configured system charge limit: ${ limit }%` : 'System charge limit: not set by Battery'
     }
 }
 const enable_battery_limiter = async () => {

@@ -1,5 +1,41 @@
 # Tray UX fork validation
 
+## macOS full-charge override (GUI-only upgrade)
+
+The status model now separates the configured limit (`limiter_enabled`) from the
+observed override (`override_state`: 0, 1, or null/unknown). `limiter_active` is
+false for both override and unknown; even zero does not prove physical enforcement.
+The menu preserves the configured preset while saying "Temporarily overridden by
+macOS" when state is 1. Gauge maintenance is a possible explanation, not a reason
+proven by this notification. Zero says "not reported"; failures say "status unavailable".
+
+`native/charging-override.c` uses only notify_register_check/notify_get_state and
+notify_cancel. The versioned read-only, unprivileged probe is built by
+`native/build-probe.sh` and bundled outside ASAR at
+`Contents/Resources/charging-override`. Missing probes, timeouts, denied execution,
+malformed output and unknown protocol versions become unknown, never false-active.
+The existing five-column status_csv and installed privileged helper are unchanged;
+old deployed helpers work with this GUI. No controller upgrade is required.
+
+Validated: 13 Swift, 24 Python, 19 Node tests pass, including zero/one/errors,
+missing probe, protocol incompatibility, old five-column helper responses and menu
+presets. Built/ad-hoc signed bundle and embedded probe both verify. Live probe and
+packaged model observed state 1, configured 60%, actual 100% fully charged on AC;
+menu uses inactive icon and preserves 60%. The notification alone cannot prove
+calibration. Packaged GUI launched and generated its tray; CLI Electron harness
+`app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron tests/verify-packaged.js`
+reads the packaged ASAR and builds a native Menu without invoking any controls.
+No visual screenshot acceptance claimed. No active preference was changed.
+
+Upgrade: quit installed Battery, then run
+`cd /Users/damianczerniak/Repos/battery && bash native/update-gui.sh`.
+The GUI-only updater includes the bundled probe and leaves helper, controller,
+preferences and baseline intact. Not executed here: `sudo -n true` requires a
+password; the installed app remains unchanged. No new privilege or sudo rule.
+
+The earlier validation record below describes the preceding tray UX release.
+
+
 Fork GUI version: **1.0.11-mrcs64.1**. Native menu only; no new window/framework.
 
 - Battery row shows percentage and the observed pmset charging state; source is a separate AC/battery row. Missing estimates are omitted, not rendered as `unknown remaining`. Missing pmset data is explicitly unavailable without blocking valid backend controls.

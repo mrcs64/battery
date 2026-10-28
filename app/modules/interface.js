@@ -1,5 +1,5 @@
 const { shell, app, Tray, Menu, powerMonitor, nativeTheme, dialog } = require( 'electron' )
-const { disable_battery_limiter, initialize_battery, is_limiter_enabled, get_battery_status, LIMIT_PRESETS, set_battery_limit } = require( './battery' )
+const { disable_battery_limiter, initialize_battery, get_battery_status, LIMIT_PRESETS, set_battery_limit } = require( './battery' )
 const { log, alert } = require( './helpers' )
 const { get_inactive_logo, get_active_logo } = require( './theme' )
 
@@ -13,11 +13,11 @@ const generate_app_menu = async () => {
 
     try {
         // Get battery and daemon status
-        const { battery_state, daemon_state, power, maintain_percentage, percentage, limiter_enabled: limiter_on } = await get_battery_status()
+        const { battery_state, daemon_state, power, maintain_percentage, percentage, limiter_enabled: limiter_on, limiter_active, override_message, override_detail } = await get_battery_status()
 
         // Set tray icon
         log( `Generate app menu percentage: ${ percentage }` )
-        tray.setImage( limiter_on ? get_active_logo( percentage ) : get_inactive_logo( percentage ) )
+        tray.setImage( limiter_active ? get_active_logo( percentage ) : get_inactive_logo( percentage ) )
 
         // Build menu
         return Menu.buildFromTemplate( [
@@ -25,6 +25,8 @@ const generate_app_menu = async () => {
             { label: `Battery: ${ battery_state }`, enabled: false },
             { label: `Power source: ${ power.source }`, enabled: false },
             { label: daemon_state, enabled: false },
+            { label: override_message || 'macOS full-charge override: status unavailable', enabled: false },
+            { label: override_detail || 'Physical enforcement is not verified.', enabled: false },
             { type: 'separator' },
             {
                 label: 'Set charge limit',
@@ -139,7 +141,7 @@ const refresh_logo = async ( percent=80, force ) => {
     if( force == 'active' ) return tray.setImage( get_active_logo( percent ) )
     if( force == 'inactive' ) return tray.setImage( get_inactive_logo( percent ) )
 
-    const is_enabled = await is_limiter_enabled()
+    const is_enabled = ( await get_battery_status() ).limiter_active
     if( is_enabled ) return tray.setImage( get_active_logo( percent ) )
     return tray.setImage( get_inactive_logo( percent ) )
 }

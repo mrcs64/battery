@@ -15,7 +15,7 @@ function load( result = '75,1:20,enabled,not discharging,60', failure ) {
         if( failure ) throw failure
         return { stdout: result, stderr: '' }
     }
-    vm.runInNewContext( source, { module, require: name => name === 'node:child_process' ? { execFile } : name === './power' ? require( '../app/modules/power' ) : require( name ) } )
+    vm.runInNewContext( source, { module, require: name => name === 'node:child_process' ? { execFile } : name === './power' ? require( '../app/modules/power' ) : name === './override' ? { ...require( '../app/modules/override' ), read_override: async () => null } : require( name ) } )
     return { api: module.exports, calls }
 }
 test( 'startup reads status once without enabling/updating/killing/installing', async () => {
@@ -101,9 +101,9 @@ test( 'pmset failure keeps backend state and controls available without invented
         if( path === '/usr/bin/pmset' ) throw new Error( 'pmset timed out' )
         return { stdout: '71,unknown,disabled,not discharging,60' }
     }
-    vm.runInNewContext( source, { module, require: name => name === 'node:child_process' ? { execFile } : name === './power' ? require( '../app/modules/power' ) : require( name ) } )
+    vm.runInNewContext( source, { module, require: name => name === 'node:child_process' ? { execFile } : name === './power' ? require( '../app/modules/power' ) : name === './override' ? { ...require( '../app/modules/override' ), read_override: async () => null } : require( name ) } )
     const status = await module.exports.get_battery_status()
-    assert.equal( status.daemon_state, 'System charge limit: 60%' )
+    assert.equal( status.daemon_state, 'Configured system charge limit: 60%' )
     assert.equal( status.limiter_enabled, true )
     assert.match( status.battery_state, /Charging state unavailable/ )
     assert.doesNotMatch( status.battery_state, /unknown remaining/ )

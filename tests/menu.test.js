@@ -3,9 +3,10 @@ const assert = require( 'node:assert/strict' )
 const vm = require( 'node:vm' )
 const fs = require( 'node:fs' )
 const source = fs.readFileSync( 'app/modules/interface.js', 'utf8' )
-function load( failure = false, response = 0 ) {
+function load( failure = false, response = 0, state = null ) {
     const calls = []
     const status = { battery_state: '71% — Not charging', daemon_state: 'System charge limit: 60%', power: { source: 'AC power' }, percentage: '71', maintain_percentage: '60', limiter_enabled: true }
+    Object.assign( status, require( '../app/modules/override' ).override_status( '60', state ) )
     const module = { exports: {} }
     const backend = {
         LIMIT_PRESETS: [ '60', '70', '80', '90', '100' ],
@@ -35,6 +36,16 @@ test( 'menu groups telemetry and presets, keeps caveat in About, and renders for
     assert.match( menu.find( item => item.submenu && item.label && item.label.startsWith( 'Battery v' ) ).label, /1.0.11-mrcs64.1.*mrcs64 fork/ )
     assert.match( menu.find( item => item.label && item.label.startsWith( 'Battery v' ) ).submenu[ 0 ].label, /physical enforcement not verified/ )
     assert.equal( calls.length, 0 )
+} )
+test( 'override, clear and unknown menus retain configured preset without automatic writes', async () => {
+    for( const state of [ 0, 1, null ] ) {
+        const { api, calls } = load( false, 0, state )
+        const menu = await api.generate_app_menu()
+        assert.match( menu[ 3 ].label, state === 1 ? /Temporarily overridden by macOS/ : state === 0 ? /not reported/ : /unavailable/ )
+        const presets = menu.find( item => item.label === 'Set charge limit' ).submenu
+        assert.equal( presets.find( item => item.checked ).label, '60%' )
+        assert.equal( calls.length, 0 )
+    }
 } )
 test( 'unavailable backend presents error and no charge-changing actions', async () => {
     const { api, calls } = load( true )

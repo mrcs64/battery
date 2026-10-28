@@ -10,6 +10,7 @@
       "writeUpdateInfo": false
     },
     "compression": "normal",
+    "extraResources": [ { "from": "../build/charging-override", "to": "charging-override" } ],
     "extraFiles": {
       "from": "./assets",
       "to": "resources",
@@ -28,11 +29,12 @@
   },
   "scripts": {
     "start": "development=true electron .",
+    "prebuild": "bash ../native/build-probe.sh",
     "start:watch": "nodemon --watch . --exec 'skipupdate=true development=true electron .'",
     "build": "rm -rf ./dist/* && electron-builder build --mac --arm64",
     "prepare": "cd .. && husky install ./app/.husky",
     "lint": "eslint --fix modules main.js",
-    "build:local": "node ../native/prepare-electron.js && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --arm64 --publish never --config.electronDist=node_modules/electron/dist --config.mac.identity=- && /usr/bin/codesign --force --deep --sign - --options runtime --entitlements build/entitlements.mac.plist dist/mac-arm64/battery.app && /usr/bin/codesign --verify --deep --strict dist/mac-arm64/battery.app"
+    "build:local": "bash ../native/build-probe.sh && node ../native/prepare-electron.js && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --arm64 --publish never --config.electronDist=node_modules/electron/dist --config.mac.identity=- && /usr/bin/codesign --force --deep --sign - --options runtime --entitlements build/entitlements.mac.plist dist/mac-arm64/battery.app && /usr/bin/codesign --verify --deep --strict dist/mac-arm64/battery.app"
   },
   "repository": "https://github.com/actuallymentor/battery",
   "keywords": [
